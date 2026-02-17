@@ -21,7 +21,7 @@ This will create a `sqlatom/atoms.db` in the project root if there isn't one yet
 All atom operations are supported, with the following semantics:
 - `swap!`, `compare-and-set!`, `swap-vals!` have transaction semantics and are safe to use between atoms/threads/processes
 - `deref` will read from the database if the value has been updated since last read
-- `add-watch` watchers see updates from other atoms only when reading/updating, and will be called watchers for unseen updates
+- `add-watch` watchers see updates from other atoms only when reading/updating, and will not be called for unseen updates
 
 Values are stored as edn, and use the readers for the current process.
 You should add `sqlatom/` to your `.gitignore` unless you want to commit the state.
