@@ -4,7 +4,7 @@
 
 ``` clojure
 ;; deps.edn
-{:deps {io.github.filipesilva/sqlatom {:git/tag "v1.0.0" :git/sha "..."}}}
+{:deps {io.github.filipesilva/sqlatom {:git/tag "v1.0.0" :git/sha "b755b19"}}}
 ```
 
 ## Usage
