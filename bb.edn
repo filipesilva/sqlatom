@@ -1,8 +1,11 @@
-{:deps {io.github.filipesilva/invoker {:git/tag "v0.4.7" :git/sha "2d77d"}}
+{:paths ["src"]
+ :pods {org.babashka/go-sqlite3 {:version "0.3.13"}}
  :tasks
- {nvk                {:requires ([invoker.nvk :as nvk])
-                      :task     (apply nvk/-main *command-line-args*)}
-  test:unit          (shell "bb nvk test")
+ ;; uses global nvk so it's not added to deps
+ ;; https://github.com/filipesilva/invoker
+ {test:clj           (shell "nvk test")
   test:cross-process (shell "bb test/cross_process_test.bb")
-  test               (do (run 'test:unit)
+  test:bb            (shell "nvk -d bb test")
+  test               (do (run 'test:clj)
+                         (run 'test:bb)
                          (run 'test:cross-process))}}

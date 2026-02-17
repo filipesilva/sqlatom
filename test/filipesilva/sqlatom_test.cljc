@@ -56,41 +56,47 @@
     (is (= [{:count 0} {:done true}] (reset-vals! a {:done true})))
     (is (= {:done true} @a))))
 
-(deftest watch-test
-  (let [a        (sqlatom/atom ::x 0)
-        log      (clojure.core/atom [])
-        watch-fn (fn [k _r old new]
-                   (swap! log conj [k old new]))]
-    (add-watch a :w watch-fn)
-    (swap! a inc)
-    (swap! a inc)
-    (is (= [[:w 0 1] [:w 1 2]] @log))
-    (remove-watch a :w)
-    (swap! a inc)
-    (is (= [[:w 0 1] [:w 1 2]] @log) "no more watch calls after remove")))
+;; IRef/IReference tests, not supported at the moment in BB
+;; https://github.com/babashka/babashka/issues/1931
+#?(:bb  nil
+   :clj (deftest watch-test
+          (let [a        (sqlatom/atom ::x 0)
+                log      (clojure.core/atom [])
+                watch-fn (fn [k _r old new]
+                           (swap! log conj [k old new]))]
+            (add-watch a :w watch-fn)
+            (swap! a inc)
+            (swap! a inc)
+            (is (= [[:w 0 1] [:w 1 2]] @log))
+            (remove-watch a :w)
+            (swap! a inc)
+            (is (= [[:w 0 1] [:w 1 2]] @log) "no more watch calls after remove"))))
 
-(deftest validator-test
-  (let [a (sqlatom/atom ::x 1)]
-    (set-validator! a pos?)
-    (testing "valid value succeeds"
-      (is (= 5 (reset! a 5))))
-    (testing "invalid value throws"
-      (is (thrown? IllegalStateException (reset! a -1)))
-      (is (= 5 @a) "value unchanged after failed validation"))
-    (testing "setting validator that rejects current value throws"
-      (is (thrown? IllegalStateException (set-validator! a neg?))))))
+#?(:bb  nil
+   :clj (deftest validator-test
+          (let [a (sqlatom/atom ::x 1)]
+            (set-validator! a pos?)
+            (testing "valid value succeeds"
+              (is (= 5 (reset! a 5))))
+            (testing "invalid value throws"
+              (is (thrown? IllegalStateException (reset! a -1)))
+              (is (= 5 @a) "value unchanged after failed validation"))
+            (testing "setting validator that rejects current value throws"
+              (is (thrown? IllegalStateException (set-validator! a neg?)))))))
 
-(deftest meta-test
-  (let [a (sqlatom/atom ::x 0)]
-    (is (= {} (meta a)))
-    (reset-meta! a {:my :meta})
-    (is (= {:my :meta} (meta a)))
-    (alter-meta! a assoc :extra true)
-    (is (= {:my :meta :extra true} (meta a)))))
+#?(:bb  nil
+   :clj (deftest meta-test
+          (let [a (sqlatom/atom ::x 0)]
+            (is (= {} (meta a)))
+            (reset-meta! a {:my :meta})
+            (is (= {:my :meta} (meta a)))
+            (alter-meta! a assoc :extra true)
+            (is (= {:my :meta :extra true} (meta a))))))
 
-(deftest meta-option-test
-  (let [a (sqlatom/atom ::x 0 :meta {:created true})]
-    (is (= {:created true} (meta a)))))
+#?(:bb  nil
+   :clj (deftest meta-option-test
+          (let [a (sqlatom/atom ::x 0 :meta {:created true})]
+            (is (= {:created true} (meta a))))))
 
 (deftest validator-option-test
   (testing "validator option on creation"

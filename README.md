@@ -1,6 +1,6 @@
 # sqlatom
 
-`sqlatom` is a Clojure library that stores atoms in a SQLite database:
+`sqlatom` is a Clojure and Babashka library that stores atoms in a SQLite database:
 
 ``` clojure
 ;; deps.edn
@@ -19,7 +19,7 @@
 This will create a `sqlatom/atoms.db` in the project root if there isn't one yet, then initialize `:state` as `{}` if there is no value for it yet, or read the existing value for `:state`.
 
 All atom operations are supported, with the following semantics:
-- `swap!`, `compare-and-set!`, `swap-vals!` have transaction semantics and are safe to use between atoms/threads/processes
+- `swap!`, `compare-and-set!`, `swap-vals!` have transaction semantics and are safe to use between atoms/threads/processes/dialects
 - `deref` will read from the database if the value has been updated since last read
 - `add-watch` watchers see updates from other atoms only when reading/updating, and will not be called for unseen updates
 
@@ -66,3 +66,13 @@ Using an existing `sqlatom` that was removed will throw an an error, but resume 
 | **Scope** | Minimal, atoms only, no configuration beyond `:dir` | Feature-rich, custom serializers, error handlers, sync/async modes, `duragent` |
 
 Choose `sqlatom` if you need safe cross-process swaps with a simple API. Choose `duratom` if you need multiple storage backends or its additional features.
+
+
+## Babashka
+
+The following operations are not supported in Babashka:
+- `add-watch`, `remove-watch`
+- `set-validator!`, `get-validator`
+- `meta`, `alter-meta!`, `reset-meta!`
+
+This is being tracked in https://github.com/babashka/babashka/issues/1931

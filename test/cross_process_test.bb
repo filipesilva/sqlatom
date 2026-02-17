@@ -10,10 +10,18 @@
 
 (println (str "Testing " n-procs " processes x " n-incs " increments = " expected " expected"))
 
+;; set to true to see logging from workers
+(def worker-logs false)
+
 (try
   ;; launch workers in parallel
-  (let [procs (mapv (fn [_]
-                      (p/process ["clojure" "-M" "test/cross_process_worker.clj" test-dir (str n-incs)]))
+  (let [process-opts (if worker-logs
+                       {:out :inherit}
+                       {})
+        procs (mapv (fn [i]
+                      (if (even? i)
+                        (p/process process-opts "clojure" "-M" "test/cross_process_worker.clj" test-dir (str n-incs))
+                        (p/process process-opts "bb" "test/cross_process_worker.clj" test-dir (str n-incs))))
                     (range n-procs))]
     (doseq [proc procs]
       (let [{:keys [exit]} @proc]
