@@ -7,25 +7,20 @@
 
 ;; --- Connection management ---
 
-(defonce ^:private connections (clojure.core/atom {}))
-
 (defn- get-connection [db-path]
-  (or (get @connections db-path)
-      (locking connections
-        (or (get @connections db-path)
-            (let [conn (DriverManager/getConnection (str "jdbc:sqlite:" db-path))]
-              (with-open [stmt (.createStatement conn)]
-                ;; same as rails 8.0
-                (.execute stmt "PRAGMA foreign_keys = ON")
-                (.execute stmt " PRAGMA journal_mode = WAL")
-                (.execute stmt " PRAGMA synchronous = NORMAL")
-                (.execute stmt " PRAGMA mmap_size = 134217728") ; 128 megabytes
-                (.execute stmt " PRAGMA journal_size_limit = 67108864") ; 64 megabytes
-                (.execute stmt " PRAGMA cache_size = 2000")
-                ;; create atoms table
-                (.execute stmt "CREATE TABLE IF NOT EXISTS atoms (key TEXT PRIMARY KEY, value TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1)"))
-              (swap! connections assoc db-path conn)
-              conn)))))
+  (let [conn (DriverManager/getConnection (str "jdbc:sqlite:" db-path))]
+    (with-open [stmt (.createStatement conn)]
+      ;; same as rails 8.0
+      (.execute stmt "PRAGMA journal_mode = WAL")
+      (.execute stmt "PRAGMA synchronous = NORMAL")
+      (.execute stmt "PRAGMA mmap_size = 134217728") ; 128 megabytes
+      (.execute stmt "PRAGMA journal_size_limit = 67108864") ; 64 megabytes
+      (.execute stmt "PRAGMA cache_size = 2000")
+      ;; wait on lock before throwing SQLITE_BUSY
+      (.execute stmt "PRAGMA busy_timeout = 5000")
+      ;; create atoms table
+      (.execute stmt "CREATE TABLE IF NOT EXISTS atoms (key TEXT PRIMARY KEY, value TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1)"))
+    conn))
 
 (defn- pr-str-meta [v]
   (binding [*print-meta* true]
@@ -33,12 +28,15 @@
 
 ;; --- DB helpers ---
 
+(defn- read-edn [s]
+  (edn/read-string {:readers *data-readers*} s))
+
 (defn- db-read [conn key-str]
   (with-open [stmt (.prepareStatement conn "SELECT value, version FROM atoms WHERE key = ?")]
     (.setString stmt 1 key-str)
     (with-open [rs (.executeQuery stmt)]
       (when (.next rs)
-        [(edn/read-string {:readers *data-readers*} (.getString rs "value"))
+        [(read-edn (.getString rs "value"))
          (.getLong rs "version")]))))
 
 (defn- db-read-version [conn key-str]
@@ -76,43 +74,40 @@
     (when-not (vf new-value)
       (throw-invalid-state!))))
 
-(defn- notify-watches [^ConcurrentHashMap watches atom-ref old-value new-value]
-  (doseq [[k f] watches]
-    (f k atom-ref old-value new-value)))
-
-(defn- do-swap
-  "CAS retry loop. apply-fn takes old-value, returns new-value.
-   Returns [old-value new-value]."
-  [conn key-str ^AtomicReference cache ^AtomicReference validator-ref
-   ^ConcurrentHashMap watches atom-ref apply-fn]
-  (loop []
-    (let [[old-val ver] (db-read conn key-str)
-          _ (when (nil? ver) (throw-removed! key-str))
-          new-val (apply-fn old-val)]
-      (validate validator-ref new-val)
-      (if (db-cas! conn key-str new-val (inc ver) ver)
-        (do (.set cache [new-val (inc ver)])
-            (notify-watches watches atom-ref old-val new-val)
-            [old-val new-val])
-        (recur)))))
+(defn- cache-advance!
+  "CAS-update cache only if new-ver is strictly higher. Returns true if advanced.
+   When watches are provided, notifies them on advancement."
+  ([^AtomicReference cache new-val new-ver]
+   (loop []
+     (let [current (.get cache)
+           [_ cur-ver] current]
+       (if (> new-ver cur-ver)
+         (if (.compareAndSet cache current [new-val new-ver])
+           true
+           (recur))
+         false))))
+  ([^AtomicReference cache new-val new-ver ^ConcurrentHashMap watches atom-ref old-val]
+   (when (cache-advance! cache new-val new-ver)
+     (doseq [[k f] watches]
+       (f k atom-ref old-val new-val))
+     true)))
 
 ;; --- Public API ---
 
 (def ^:private default-dir "sqlatom")
 
 (defn- db-path
-  ([] (db-path default-dir))
-  ([dir]
-   (let [d (java.io.File. dir)]
-     (when-not (.exists d)
-       (.mkdirs d))
-     (str (java.io.File. d "atoms.db")))))
+  [dir]
+  (let [d (java.io.File. dir)]
+    (when-not (.exists d)
+      (.mkdirs d))
+    (str (java.io.File. d "atoms.db"))))
 
 (defn remove
   "Removes a key from the database. Returns nil.
    Options: :dir directory."
   [key & {:keys [dir]}]
-  (let [conn (get-connection (db-path (or dir default-dir)))]
+  (with-open [conn (get-connection (db-path (or dir default-dir)))]
     (with-open [stmt (.prepareStatement conn "DELETE FROM atoms WHERE key = ?")]
       (.setString stmt 1 (pr-str key))
       (.executeUpdate stmt)
@@ -122,12 +117,12 @@
   "Returns a sequence of all keys in the database.
    Options: :dir directory."
   [& {:keys [dir]}]
-  (let [conn (get-connection (db-path (or dir default-dir)))]
+  (with-open [conn (get-connection (db-path (or dir default-dir)))]
     (with-open [stmt (.prepareStatement conn "SELECT key FROM atoms")]
       (with-open [rs (.executeQuery stmt)]
         (loop [ks []]
           (if (.next rs)
-            (recur (conj ks (edn/read-string {:readers *data-readers*} (.getString rs "key"))))
+            (recur (conj ks (read-edn (.getString rs "key"))))
             ks))))))
 
 (defn atom
@@ -137,8 +132,7 @@
    Atom options: :meta metadata-map, :validator validate-fn
    Extra options: :dir directory"
   [key default-value & {:keys [dir meta validator]}]
-  (let [db-path  (db-path (or dir default-dir))
-        conn     (get-connection db-path)
+  (let [conn     (get-connection (db-path (or dir default-dir)))
         key-str  (pr-str key)
         _        (db-insert-default! conn key-str default-value)
         [v ver]  (db-read conn key-str)
@@ -147,7 +141,17 @@
         cache    (AtomicReference. [v ver])
         vdtr     (AtomicReference. validator)
         watches  (ConcurrentHashMap.)
-        meta-ref (AtomicReference. (or meta {}))]
+        meta-ref (AtomicReference. (or meta {}))
+        swap*    (fn [self apply-fn]
+                   (loop []
+                     (let [[old-val ver] (db-read conn key-str)
+                           _             (when (nil? ver) (throw-removed! key-str))
+                           new-val       (apply-fn old-val)]
+                       (validate vdtr new-val)
+                       (if (db-cas! conn key-str new-val (inc ver) ver)
+                         (do (cache-advance! cache new-val (inc ver) watches self old-val)
+                             [old-val new-val])
+                         (recur)))))]
     (proxy [Object clojure.lang.IAtom2 clojure.lang.IRef clojure.lang.IReference] []
 
       ;; IDeref
@@ -160,50 +164,41 @@
           (if (= db-ver cached-ver)
             cached-val
             (let [[new-val new-ver] (db-read conn key-str)]
-              (.set cache [new-val new-ver])
-              (notify-watches watches this cached-val new-val)
+              (cache-advance! cache new-val new-ver watches this cached-val)
               new-val))))
 
       ;; IAtom
       (swap
-        ([f]
-         (second (do-swap conn key-str cache vdtr watches this #(f %))))
-        ([f arg]
-         (second (do-swap conn key-str cache vdtr watches this #(f % arg))))
-        ([f arg1 arg2]
-         (second (do-swap conn key-str cache vdtr watches this #(f % arg1 arg2))))
-        ([f x y args]
-         (second (do-swap conn key-str cache vdtr watches this #(apply f % x y args)))))
+        ([f] (second (swap* this f)))
+        ([f arg] (second (swap* this #(f % arg))))
+        ([f arg1 arg2] (second (swap* this #(f % arg1 arg2))))
+        ([f x y args] (second (swap* this #(apply f % x y args)))))
 
       (compareAndSet [old-val new-val]
-        (let [[db-val ver] (db-read conn key-str)]
-          (when (nil? ver) (throw-removed! key-str))
-          (if (not= db-val old-val)
-            (do (.set cache [db-val ver])
-                false)
-            (do (validate vdtr new-val)
-                (let [ok (db-cas! conn key-str new-val (inc ver) ver)]
-                  (when ok
-                    (.set cache [new-val (inc ver)])
-                    (notify-watches watches this old-val new-val))
-                  ok)))))
+        (loop []
+          (let [[db-val ver] (db-read conn key-str)]
+            (when (nil? ver) (throw-removed! key-str))
+            (if (not= db-val old-val)
+              (do (cache-advance! cache db-val ver)
+                  false)
+              (do (validate vdtr new-val)
+                  (if (db-cas! conn key-str new-val (inc ver) ver)
+                    (do (cache-advance! cache new-val (inc ver) watches this old-val)
+                        true)
+                    (recur)))))))
 
       (reset [new-val]
-        (second (do-swap conn key-str cache vdtr watches this (constantly new-val))))
+        (second (swap* this (constantly new-val))))
 
       ;; IAtom2
       (swapVals
-        ([f]
-         (do-swap conn key-str cache vdtr watches this #(f %)))
-        ([f arg]
-         (do-swap conn key-str cache vdtr watches this #(f % arg)))
-        ([f arg1 arg2]
-         (do-swap conn key-str cache vdtr watches this #(f % arg1 arg2)))
-        ([f x y args]
-         (do-swap conn key-str cache vdtr watches this #(apply f % x y args))))
+        ([f] (swap* this f))
+        ([f arg] (swap* this #(f % arg)))
+        ([f arg1 arg2] (swap* this #(f % arg1 arg2)))
+        ([f x y args] (swap* this #(apply f % x y args))))
 
       (resetVals [new-val]
-        (do-swap conn key-str cache vdtr watches this (constantly new-val)))
+        (swap* this (constantly new-val)))
 
       ;; IRef
       (setValidator [vf]

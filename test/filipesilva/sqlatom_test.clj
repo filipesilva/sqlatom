@@ -118,13 +118,17 @@
     (is (= 22 @b))))
 
 (deftest remove-test
-  (sqlatom/atom ::x 42)
-  (is (= [::x] (sqlatom/list)))
-  (sqlatom/remove ::x)
-  (is (= [] (sqlatom/list)))
-  (testing "re-creating after remove uses new default"
-    (let [a (sqlatom/atom ::x 0)]
-      (is (= 0 @a)))))
+  (let [a (sqlatom/atom ::x 42)]
+    (is (= [::x] (sqlatom/list)))
+    (sqlatom/remove ::x)
+    (is (= [] (sqlatom/list)))
+    (testing "operations on removed atom throw"
+      (is (thrown? IllegalStateException @a))
+      (is (thrown? IllegalStateException (swap! a inc)))
+      (is (thrown? IllegalStateException (reset! a 0))))
+    (testing "re-creating after remove uses new default"
+      (let [b (sqlatom/atom ::x 0)]
+        (is (= 0 @b))))))
 
 (deftest list-test
   (is (= [] (sqlatom/list)))

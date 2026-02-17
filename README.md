@@ -16,12 +16,12 @@
 (defonce state (sqlatom/atom :state {}))
 ```
 
-This will create a `sqlatom/atoms.db` in the project root if there isn't one yet, then initialize state `:state` as `{}` if there is no value for it yet, or read the existing value.
+This will create a `sqlatom/atoms.db` in the project root if there isn't one yet, then initialize `:state` as `{}` if there is no value for it yet, or read the existing value for `:state`.
 
 All atom operations are supported, with the following semantics:
-- `swap!`, `compare-and-set!`, `swap-vals!` have transaction semantics and are safe to use between processes
-- `deref` will read from the database if the value has been updates since last read
-- `add-watch` will see updates from other processes when other operations read or update the atom
+- `swap!`, `compare-and-set!`, `swap-vals!` have transaction semantics and are safe to use between atoms/threads/processes
+- `deref` will read from the database if the value has been updated since last read
+- `add-watch` watchers see updates from other atoms only when reading/updating, and will be called watchers for unseen updates
 
 Values are stored as edn, and use the readers for the current process.
 You should add `sqlatom/` to your `.gitignore` unless you want to commit the state.
@@ -60,9 +60,9 @@ Using an existing `sqlatom` that was removed will throw an an error, but resume 
 
 | | sqlatom | duratom |
 |---|---|---|
-| **Cross-process swap safety** | Yes — uses SQL compare-and-set with versioned rows | No — uses an in-memory lock, so concurrent processes can clobber each other |
+| **Cross-process swap safety** | Yes, uses SQL compare-and-set with versioned rows | No, uses an in-memory lock, so concurrent processes can clobber each other |
 | **Storage backends** | SQLite only | PostgreSQL, SQLite, S3, Redis, filesystem, file.io |
-| **Consistency** | Strong — every read/write goes through the database | Eventual by default (async writes), optional sync mode |
-| **Scope** | Minimal — atoms only, no configuration beyond `:dir` | Feature-rich — custom serializers, error handlers, sync/async modes, `duragent` |
+| **Consistency** | Strong, every read/write goes through the database | Eventual by default (async writes), optional sync mode |
+| **Scope** | Minimal, atoms only, no configuration beyond `:dir` | Feature-rich, custom serializers, error handlers, sync/async modes, `duragent` |
 
 Choose `sqlatom` if you need safe cross-process swaps with a simple API. Choose `duratom` if you need multiple storage backends or its additional features.

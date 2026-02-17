@@ -1,0 +1,8 @@
+{:deps {io.github.filipesilva/invoker {:git/tag "v0.4.7" :git/sha "2d77d"}}
+ :tasks
+ {nvk                {:requires ([invoker.nvk :as nvk])
+                      :task     (apply nvk/-main *command-line-args*)}
+  test:unit          (shell "bb nvk test")
+  test:cross-process (shell "bb test/cross_process_test.bb")
+  test               (do (run 'test:unit)
+                         (run 'test:cross-process))}}
