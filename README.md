@@ -77,7 +77,10 @@ The following operations are not supported in Babashka:
 
 This is being tracked in https://github.com/babashka/babashka/issues/1931
 
-EDN size is limited to ~20mb in Babashaka.
+In Babashka the following [limits](https://github.com/dakrone/cheshire/pull/219) apply:
+- ~20mb printed edn size
+- 1000 number length
+- 1000 nesting limit
 
 
 ## Performance
