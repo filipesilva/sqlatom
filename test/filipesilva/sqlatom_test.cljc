@@ -13,7 +13,6 @@
     (f)))
 
 (deftest create-and-deref-test
-
   (let [a (sqlatom/atom ::x {:count 0})]
     (is (= {:count 0} @a))))
 
@@ -156,6 +155,25 @@
     (let [b (sqlatom/atom ::y nil)]
       (is (= [3 4] @b))
       (is (= {:src :updated} (clojure.core/meta @b))))))
+
+(deftest reader-literals-test
+  (let [inst #inst "2024-01-15T12:00:00.000Z"
+        uuid #uuid "550e8400-e29b-41d4-a716-446655440000"]
+    (testing "inst roundtrips"
+      (let [a (sqlatom/atom ::x inst)]
+        (is (= inst @a))))
+    (testing "uuid roundtrips"
+      (sqlatom/remove ::x)
+      (let [a (sqlatom/atom ::x uuid)]
+        (is (= uuid @a))))
+    (testing "nested in map"
+      (sqlatom/remove ::x)
+      (let [v {:created inst :id uuid :name "test"}
+            a (sqlatom/atom ::x v)]
+        (is (= v @a))))
+    (testing "survives re-open"
+      (let [b (sqlatom/atom ::x nil)]
+        (is (= {:created inst :id uuid :name "test"} @b))))))
 
 (deftest dir-option-test
   (let [dir "sqlatom-test-custom"
