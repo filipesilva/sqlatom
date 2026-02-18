@@ -76,3 +76,10 @@ The following operations are not supported in Babashka:
 - `meta`, `alter-meta!`, `reset-meta!`
 
 This is being tracked in https://github.com/babashka/babashka/issues/1931
+
+EDN size is limited to ~20mb in Babashaka.
+
+
+## Performance
+
+On my machine I measured 314ms for a `reset!` and 649ms for a `swap!` of 20mb worth of EDN from a Datascript backup.
