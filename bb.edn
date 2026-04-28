@@ -8,4 +8,5 @@
   test:bb            (shell "nvk -d bb test")
   test               (do (run 'test:clj)
                          (run 'test:bb)
-                         (run 'test:cross-process))}}
+                         (run 'test:cross-process))
+  bench              (shell "clojure -M:bench -m bench")}}

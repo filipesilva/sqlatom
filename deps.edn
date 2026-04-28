@@ -1,3 +1,5 @@
 {:paths ["src"]
  :deps {org.xerial/sqlite-jdbc {:mvn/version "3.47.2.0"}}
- :aliases {:test {:extra-paths ["test"]}}}
+ :aliases {:test  {:extra-paths ["test"]}
+           :bench {:extra-paths ["bench"]
+                   :extra-deps {criterium/criterium {:mvn/version "0.4.6"}}}}}
