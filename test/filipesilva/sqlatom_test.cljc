@@ -177,6 +177,38 @@
       (let [b (sqlatom/atom ::x nil)]
         (is (= {:created inst :id uuid :name "test"} @b))))))
 
+(defrecord Money [amount currency])
+
+(defmethod print-method Money [m ^java.io.Writer w]
+  (.write w "#filipesilva.sqlatom-test/money[")
+  (print-method (:amount m) w)
+  (.write w " ")
+  (print-method (:currency m) w)
+  (.write w "]"))
+
+(defn read-money [[amount currency]]
+  (->Money amount currency))
+
+(deftest custom-tagged-literal-test
+  ;; Bind a data reader for #filipesilva.sqlatom-test/money so values
+  ;; serialized via print-method roundtrip through sqlatom's read.
+  (binding [*data-readers* (assoc *data-readers*
+                                  'filipesilva.sqlatom-test/money #'read-money)]
+    (let [m (->Money 100 :USD)]
+      (testing "print-method emits a tagged literal"
+        (is (= "#filipesilva.sqlatom-test/money[100 :USD]" (pr-str m))))
+      (testing "initial value roundtrips"
+        (sqlatom/atom ::money m)
+        (let [a (sqlatom/atom ::money nil)]
+          (is (= m @a))))
+      (testing "swap! preserves type via the read+write path"
+        (let [a (sqlatom/atom ::money nil)]
+          (swap! a update :amount inc)
+          (is (= (->Money 101 :USD) @a))
+          (let [b (sqlatom/atom ::money nil)]
+            (is (= (->Money 101 :USD) @b)
+                "re-opened atom sees swapped value")))))))
+
 (deftest dir-option-test
   (let [dir "sqlatom-test-custom"
         a   (sqlatom/atom ::x 42 :dir dir)]
