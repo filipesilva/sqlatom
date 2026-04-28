@@ -86,4 +86,4 @@ In Babashka the following [limits](https://github.com/dakrone/cheshire/pull/219)
 
 ## Performance
 
-On my machine, [criterium](https://github.com/hugoduncan/criterium) measured 208ms (±2ms) for a `reset!` and 720ms (±29ms) for a `swap!` of 20mb worth of EDN from a Datascript backup.
+On my machine, [criterium](https://github.com/hugoduncan/criterium) measured 195ms (±3ms) for a `reset!` and 273ms (±14ms) for a `swap!` of 20mb worth of EDN from a Datascript backup.

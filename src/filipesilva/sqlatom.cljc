@@ -1,6 +1,6 @@
 (ns filipesilva.sqlatom
   (:refer-clojure :exclude [atom remove list keys])
-  (:require [clojure.edn :as edn]
+  (:require #?(:bb [clojure.edn :as edn] :clj [fast-edn.core :as edn])
             #?@(:bb [[pod.babashka.go-sqlite3 :as sqlite]]))
   (:import [java.util.concurrent ConcurrentHashMap]
            [java.util.concurrent.atomic AtomicReference]
