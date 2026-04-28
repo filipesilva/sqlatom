@@ -1,5 +1,5 @@
 (ns filipesilva.sqlatom
-  (:refer-clojure :exclude [atom remove list])
+  (:refer-clojure :exclude [atom remove list keys])
   (:require [clojure.edn :as edn]
             #?@(:bb [[pod.babashka.go-sqlite3 :as sqlite]]))
   (:import [java.util.concurrent ConcurrentHashMap]
@@ -198,14 +198,20 @@
       nil
       (finally (close-db conn)))))
 
-(defn list
-  "Returns a sequence of all keys in the database.
+(defn keys
+  "Returns a set of all keys in the database.
    Options: :dir directory."
   [& {:keys [dir]}]
   (let [conn (open-db (db-path (or dir default-dir)))]
     (try
-      (mapv #(read-edn (:key %)) (sql-query conn ["SELECT key FROM atoms"]))
+      (into #{} (map #(read-edn (:key %))) (sql-query conn ["SELECT key FROM atoms"]))
       (finally (close-db conn)))))
+
+(defn ^{:deprecated "1.2.0"} list
+  "Deprecated, use `keys` instead. Returns a sequence of all keys in the database.
+   Options: :dir directory."
+  [& {:keys [dir]}]
+  (vec (keys :dir dir)))
 
 (defn atom
   "Creates an atom backed by SQLite. key is the storage key,

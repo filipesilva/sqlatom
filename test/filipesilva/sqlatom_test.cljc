@@ -7,7 +7,7 @@
 
 (use-fixtures :each
   (fn [f]
-    (doseq [k (sqlatom/list)
+    (doseq [k (sqlatom/keys)
             :when (= (namespace k) test-ns)]
       (sqlatom/remove k))
     (f)))
@@ -124,9 +124,9 @@
 
 (deftest remove-test
   (let [a (sqlatom/atom ::x 42)]
-    (is (= [::x] (sqlatom/list)))
+    (is ((sqlatom/keys) ::x))
     (sqlatom/remove ::x)
-    (is (= [] (sqlatom/list)))
+    (is (not ((sqlatom/keys) ::x)))
     (testing "operations on removed atom throw"
       (is (thrown? IllegalStateException @a))
       (is (thrown? IllegalStateException (swap! a inc)))
@@ -135,11 +135,13 @@
       (let [b (sqlatom/atom ::x 0)]
         (is (= 0 @b))))))
 
-(deftest list-test
-  (is (= [] (sqlatom/list)))
+(deftest keys-test
+  (is (not ((sqlatom/keys) ::a)))
+  (is (not ((sqlatom/keys) ::b)))
   (sqlatom/atom ::b 2)
   (sqlatom/atom ::a 1)
-  (is (= #{::a ::b} (set (sqlatom/list)))))
+  (is ((sqlatom/keys) ::a))
+  (is ((sqlatom/keys) ::b)))
 
 (deftest value-metadata-test
   (testing "metadata on default value persists"

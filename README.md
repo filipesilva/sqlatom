@@ -40,17 +40,18 @@ You can also pass in a `:dir` option after the value to change it from the `sqla
 
 ## Helpers
 
-Use `sqlatom/list` to get a list of all saved keys. This is useful for instrospection and maintenance (e.g. unit test fixtures).
+Use `sqlatom/keys` to get the set of all saved keys. This is useful for instrospection and maintenance (e.g. unit test fixtures).
 You can then use `sqlatom/atom` to get their values, or `sqlatom/remove` to remove keys.
 
 ``` clojure
-(sqlatom/list)              ;=> (:state)
+(sqlatom/keys)              ;=> #{:state}
 @(sqlatom/atom :state nil)  ;=> {}
 (sqlatom/remove :state)     ;=> nil
-(sqlatom/list)              ;=> ()
+(sqlatom/keys)              ;=> #{}
 ```
 
-Both `sqlatom/list` and `sqlatom/remove` support the `:dir` option.
+Both `sqlatom/keys` and `sqlatom/remove` support the `:dir` option.
+`sqlatom/list` is a deprecated alias for `sqlatom/keys` that returns a vector instead of a set.
 Using an existing `sqlatom` that was removed will throw an an error, but resume working normally if you recreate it using the same key.
 
 
