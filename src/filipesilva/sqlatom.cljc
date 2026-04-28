@@ -139,6 +139,21 @@
         (cache-advance! cache new-val new-ver watches self cached-val)
         new-val))))
 
+(defn- reset-impl [conn key-str ^AtomicReference cache ^AtomicReference vdtr
+                   ^ConcurrentHashMap watches self new-val]
+  (validate vdtr new-val)
+  (loop []
+    (let [[cached-val cached-ver] (.get cache)
+          db-ver        (db-read-version conn key-str)
+          _             (when (nil? db-ver) (throw-removed! key-str))
+          [old-val ver] (if (= db-ver cached-ver)
+                          [cached-val cached-ver]
+                          (db-read conn key-str))]
+      (if (db-cas! conn key-str new-val (inc ver) ver)
+        (do (cache-advance! cache new-val (inc ver) watches self old-val)
+            [old-val new-val])
+        (recur)))))
+
 (defn- swap-impl [conn key-str ^AtomicReference cache ^AtomicReference vdtr
                   ^ConcurrentHashMap watches self apply-fn]
   (loop []
@@ -220,12 +235,12 @@
          (swap [this f a b] (second (swap-impl conn key-str cache vdtr watches this #(f % a b))))
          (swap [this f x y & args] (second (swap-impl conn key-str cache vdtr watches this #(apply f % x y args))))
          (compareAndSet [this o n] (cas-impl conn key-str cache vdtr watches this o n))
-         (reset [this v] (second (swap-impl conn key-str cache vdtr watches this (constantly v))))
+         (reset [this v] (second (reset-impl conn key-str cache vdtr watches this v)))
          (swapVals [this f] (swap-impl conn key-str cache vdtr watches this f))
          (swapVals [this f a] (swap-impl conn key-str cache vdtr watches this #(f % a)))
          (swapVals [this f a b] (swap-impl conn key-str cache vdtr watches this #(f % a b)))
          (swapVals [this f x y & args] (swap-impl conn key-str cache vdtr watches this #(apply f % x y args)))
-         (resetVals [this v] (swap-impl conn key-str cache vdtr watches this (constantly v))))
+         (resetVals [this v] (reset-impl conn key-str cache vdtr watches this v)))
 
        :clj
        (proxy [clojure.lang.IAtom2 clojure.lang.IRef clojure.lang.IReference] []
@@ -236,13 +251,13 @@
            ([f a b]      (second (swap-impl conn key-str cache vdtr watches this #(f % a b))))
            ([f x y args] (second (swap-impl conn key-str cache vdtr watches this #(apply f % x y args)))))
          (compareAndSet [o n] (cas-impl conn key-str cache vdtr watches this o n))
-         (reset [v] (second (swap-impl conn key-str cache vdtr watches this (constantly v))))
+         (reset [v] (second (reset-impl conn key-str cache vdtr watches this v)))
          (swapVals
            ([f]          (swap-impl conn key-str cache vdtr watches this f))
            ([f a]        (swap-impl conn key-str cache vdtr watches this #(f % a)))
            ([f a b]      (swap-impl conn key-str cache vdtr watches this #(f % a b)))
            ([f x y args] (swap-impl conn key-str cache vdtr watches this #(apply f % x y args))))
-         (resetVals [v] (swap-impl conn key-str cache vdtr watches this (constantly v)))
+         (resetVals [v] (reset-impl conn key-str cache vdtr watches this v))
 
          (setValidator [vf] (set-validator-impl conn key-str vdtr vf))
          (getValidator [] (.get vdtr))
