@@ -1,6 +1,7 @@
 (ns filipesilva.sqlatom
   (:refer-clojure :exclude [atom remove list keys])
   (:require #?(:bb [clojure.edn :as edn] :clj [fast-edn.core :as edn])
+            [filipesilva.fast-pr-str :as fast-pr-str]
             #?@(:bb [[pod.babashka.go-sqlite3 :as sqlite]]))
   (:import [java.util.concurrent ConcurrentHashMap]
            [java.util.concurrent.atomic AtomicReference]
@@ -66,7 +67,8 @@
 
 (defn- pr-str-meta [v]
   (binding [*print-meta* true]
-    (pr-str v)))
+    #?(:bb  (pr-str v)
+       :clj (fast-pr-str/pr-str v))))
 
 (defn- read-edn [s]
   (edn/read-string {:readers *data-readers*} s))

@@ -1,7 +1,11 @@
 (ns filipesilva.sqlatom-test
   (:require
-   [clojure.test :refer [deftest is testing use-fixtures]]
+   [clojure.test :as t :refer [deftest is testing use-fixtures]]
    [filipesilva.sqlatom :as sqlatom]))
+
+(defn -main [& _]
+  (let [{:keys [fail error]} (t/run-tests 'filipesilva.sqlatom-test)]
+    (System/exit (if (zero? (+ fail error)) 0 1))))
 
 (def ^:private test-ns (namespace ::_))
 

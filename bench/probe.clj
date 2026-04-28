@@ -3,7 +3,7 @@
    Run with: bb probe"
   (:require [filipesilva.sqlatom :as sqlatom]
             [fast-edn.core :as fast-edn]
-            [clojure.edn :as edn]))
+            [filipesilva.fast-pr-str :as fast-pr-str]))
 
 (def ^:dynamic *total* nil)
 
@@ -52,20 +52,14 @@
                                (fast-edn/read-string {:default (fn [_ v] v)} raw-row))
                      new-val (timed "apply-fn"
                                (assoc parsed :probe-key "x"))
-                     written (timed "pr-str-meta"
-                               (binding [*print-meta* true] (pr-str new-val)))]
+                     written (timed "fast-pr-str"
+                               (binding [*print-meta* true] (fast-pr-str/pr-str new-val)))]
                  (timed "UPDATE"
                    (with-open [stmt (.prepareStatement c "UPDATE atoms SET value = ?, version = version + 1 WHERE key = ?")]
                      (.setString stmt 1 written)
                      (.setString stmt 2 k-str)
                      (.executeUpdate stmt))))
-               (printf "  %-18s %7.1f ms%n" "TOTAL" @*total*))
-
-             (println "\nReader comparison on the same row:")
-             (timed "fast-edn read"
-               (fast-edn/read-string {:default (fn [_ v] v)} raw-row))
-             (timed "clojure.edn read"
-               (edn/read-string {:default (fn [_ v] v)} raw-row)))
+               (printf "  %-18s %7.1f ms%n" "TOTAL" @*total*)))
            (finally (.close c))))
        (finally
          (sqlatom/remove k))))))

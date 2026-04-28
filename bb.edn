@@ -1,13 +1,12 @@
 {:paths ["src"]
  :pods {org.babashka/go-sqlite3 {:version "0.3.13"}}
  :tasks
- ;; uses global nvk so it's not added to deps
- ;; https://github.com/filipesilva/invoker
- {test:clj           (shell "nvk test")
+ {test:clj           (shell "clojure -M:test -m filipesilva.sqlatom-test")
+  test:bb            (shell "bb -cp src:test -m filipesilva.sqlatom-test")
   test:cross-process (shell "bb test/cross_process_test.bb")
-  test:bb            (shell "nvk -d bb test")
   test               (do (run 'test:clj)
                          (run 'test:bb)
                          (run 'test:cross-process))
   bench              (shell "clojure -M:bench -m bench")
-  probe              (shell "clojure -M:bench -m probe")}}
+  probe              (shell "clojure -M:bench -m probe")
+  roundtrip          (shell "clojure -M:bench -m roundtrip")}}
