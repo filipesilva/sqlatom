@@ -44,8 +44,8 @@ Use `sqlatom/keys` to get the set of all saved keys. This is useful for instrosp
 You can then use `sqlatom/atom` to get their values, or `sqlatom/remove` to remove keys.
 
 ``` clojure
+@(sqlatom/atom :state {})   ;=> {}
 (sqlatom/keys)              ;=> #{:state}
-@(sqlatom/atom :state nil)  ;=> {}
 (sqlatom/remove :state)     ;=> nil
 (sqlatom/keys)              ;=> #{}
 ```
