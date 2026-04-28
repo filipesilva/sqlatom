@@ -9,4 +9,5 @@
   test               (do (run 'test:clj)
                          (run 'test:bb)
                          (run 'test:cross-process))
-  bench              (shell "clojure -M:bench -m bench")}}
+  bench              (shell "clojure -M:bench -m bench")
+  probe              (shell "clojure -M:bench -m probe")}}
