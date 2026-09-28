@@ -24,28 +24,6 @@
                   (recur (conj rows (zipmap ks (mapv #(.getObject rs (inc %)) (range n)))))
                   rows))))))
 
-(def ^:private pragmas
-  ["PRAGMA journal_mode = WAL"
-   "PRAGMA synchronous = NORMAL"
-   "PRAGMA mmap_size = 134217728"         ; 128 megabytes
-   "PRAGMA journal_size_limit = 67108864" ; 64 megabytes
-   "PRAGMA cache_size = 2000"
-   "PRAGMA busy_timeout = 5000"])
-
-(def ^:private create-table-sql
-  "CREATE TABLE IF NOT EXISTS atoms (key TEXT PRIMARY KEY, value TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1)")
-
-;; bb uses a db-path instead of conn
-(defn- open-db [db-path]
-  #?(:bb  (do (doseq [p pragmas] (sqlite/execute! db-path [p]))
-              (sqlite/execute! db-path [create-table-sql])
-              db-path)
-     :clj (let [conn (DriverManager/getConnection (str "jdbc:sqlite:" db-path))]
-             (with-open [stmt (.createStatement conn)]
-               (doseq [p pragmas] (.execute stmt p))
-               (.execute stmt create-table-sql))
-             conn)))
-
 (defn- close-db [conn]
   #?(:bb  nil
      :clj (.close conn)))
@@ -54,7 +32,8 @@
   #?(:bb  (:rows-affected (sqlite/execute! conn sql-params))
      :clj (with-open [stmt (.prepareStatement conn (first sql-params))]
              (set-params! stmt (rest sql-params))
-             (.executeUpdate stmt))))
+             (.execute stmt)
+             (.getUpdateCount stmt))))
 
 (defn- sql-query [conn sql-params]
   #?(:bb  (sqlite/query conn sql-params)
@@ -62,6 +41,39 @@
              (set-params! stmt (rest sql-params))
              (with-open [rs (.executeQuery stmt)]
                (resultset->maps rs)))))
+
+(defn- add-nonce-column! [conn]
+  ;; sqlite has no ADD COLUMN IF NOT EXISTS, so check before and,
+  ;; in case another process added it meanwhile, after a failure
+  (let [has-nonce? #(some (fn [col] (= "nonce" (:name col)))
+                          (sql-query conn ["PRAGMA table_info(atoms)"]))]
+    (when-not (has-nonce?)
+      (try
+        (sql-execute! conn ["ALTER TABLE atoms ADD COLUMN nonce TEXT NOT NULL DEFAULT ''"])
+        (catch Exception e
+          (when-not (has-nonce?) (throw e)))))))
+
+;; Run in order on every open, so each must be idempotent.
+;; Strings are executed as sql, fns are called with conn.
+(def ^:private migrations
+  ["PRAGMA journal_mode = WAL"
+   "PRAGMA synchronous = NORMAL"
+   "PRAGMA mmap_size = 134217728"         ; 128 megabytes
+   "PRAGMA journal_size_limit = 67108864" ; 64 megabytes
+   "PRAGMA cache_size = 2000"
+   "PRAGMA busy_timeout = 5000"
+   "CREATE TABLE IF NOT EXISTS atoms (key TEXT PRIMARY KEY, value TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1)"
+   add-nonce-column!])
+
+;; bb uses a db-path instead of conn
+(defn- open-db [db-path]
+  (let [conn #?(:bb  db-path
+                :clj (DriverManager/getConnection (str "jdbc:sqlite:" db-path)))]
+    (doseq [m migrations]
+      (if (string? m)
+        (sql-execute! conn [m])
+        (m conn)))
+    conn))
 
 ;; --- Helpers ---
 
@@ -83,19 +95,20 @@
     (str (java.io.File. d "atoms.db"))))
 
 (defn- db-read [conn key-str]
-  (when-let [row (first (sql-query conn ["SELECT value, version FROM atoms WHERE key = ?" key-str]))]
-    [(read-edn (:value row)) (:version row)]))
+  (when-let [row (first (sql-query conn ["SELECT value, version, nonce FROM atoms WHERE key = ?" key-str]))]
+    [(read-edn (:value row)) (:version row) (:nonce row)]))
 
 (defn- db-read-version [conn key-str]
-  (:version (first (sql-query conn ["SELECT version FROM atoms WHERE key = ?" key-str]))))
+  (when-let [row (first (sql-query conn ["SELECT version, nonce FROM atoms WHERE key = ?" key-str]))]
+    [(:version row) (:nonce row)]))
 
-(defn- db-cas! [conn key-str new-value new-version expected-version]
-  (= 1 (sql-execute! conn ["UPDATE atoms SET value = ?, version = ? WHERE key = ? AND version = ?"
-                            (pr-str-meta new-value) new-version key-str expected-version])))
+(defn- db-cas! [conn key-str new-value new-version expected-version nonce]
+  (= 1 (sql-execute! conn ["UPDATE atoms SET value = ?, version = ? WHERE key = ? AND version = ? AND nonce = ?"
+                            (pr-str-meta new-value) new-version key-str expected-version nonce])))
 
 (defn- db-insert-default! [conn key-str default-value]
-  (sql-execute! conn ["INSERT OR IGNORE INTO atoms (key, value) VALUES (?, ?)"
-                       key-str (pr-str-meta default-value)])
+  (sql-execute! conn ["INSERT OR IGNORE INTO atoms (key, value, nonce) VALUES (?, ?, ?)"
+                       key-str (pr-str-meta default-value) (str (random-uuid))])
   nil)
 
 (defn- throw-invalid-state! []
@@ -110,19 +123,19 @@
       (throw-invalid-state!))))
 
 (defn- cache-advance!
-  "CAS-update cache only if new-ver is strictly higher. Returns true if advanced.
-   When watches are provided, notifies them on advancement."
-  ([^AtomicReference cache new-val new-ver]
+  "CAS-update cache only if new-ver is strictly higher or the nonce changed.
+   Returns true if advanced. When watches are provided, notifies them on advancement."
+  ([^AtomicReference cache new-val new-ver new-nonce]
    (loop []
      (let [current (.get cache)
-           [_ cur-ver] current]
-       (if (> new-ver cur-ver)
-         (if (.compareAndSet cache current [new-val new-ver])
+           [_ cur-ver cur-nonce] current]
+       (if (or (not= new-nonce cur-nonce) (> new-ver cur-ver))
+         (if (.compareAndSet cache current [new-val new-ver new-nonce])
            true
            (recur))
          false))))
-  ([^AtomicReference cache new-val new-ver ^ConcurrentHashMap watches atom-ref old-val]
-   (when (cache-advance! cache new-val new-ver)
+  ([^AtomicReference cache new-val new-ver new-nonce ^ConcurrentHashMap watches atom-ref old-val]
+   (when (cache-advance! cache new-val new-ver new-nonce)
      (doseq [[k f] watches]
        (f k atom-ref old-val new-val))
      true)))
@@ -130,59 +143,59 @@
 ;; --- Implementation fns (shared between proxy/reify) ---
 
 (defn- deref-impl [conn key-str ^AtomicReference cache ^ConcurrentHashMap watches self]
-  (let [[cached-val cached-ver] (.get cache)
-        db-ver (db-read-version conn key-str)]
+  (let [[cached-val cached-ver cached-nonce] (.get cache)
+        [db-ver db-nonce] (db-read-version conn key-str)]
     (when (nil? db-ver)
-      (.set cache [nil -1])
+      (.set cache [nil -1 nil])
       (throw-removed! key-str))
-    (if (= db-ver cached-ver)
+    (if (= [db-ver db-nonce] [cached-ver cached-nonce])
       cached-val
-      (let [[new-val new-ver] (db-read conn key-str)]
-        (cache-advance! cache new-val new-ver watches self cached-val)
+      (let [[new-val new-ver new-nonce] (db-read conn key-str)]
+        (cache-advance! cache new-val new-ver new-nonce watches self cached-val)
         new-val))))
 
 (defn- reset-impl [conn key-str ^AtomicReference cache ^AtomicReference vdtr
                    ^ConcurrentHashMap watches self new-val]
   (validate vdtr new-val)
   (loop []
-    (let [[cached-val cached-ver] (.get cache)
-          db-ver        (db-read-version conn key-str)
-          _             (when (nil? db-ver) (throw-removed! key-str))
-          [old-val ver] (if (= db-ver cached-ver)
-                          [cached-val cached-ver]
-                          (db-read conn key-str))]
-      (if (db-cas! conn key-str new-val (inc ver) ver)
-        (do (cache-advance! cache new-val (inc ver) watches self old-val)
+    (let [[cached-val cached-ver cached-nonce] (.get cache)
+          [db-ver db-nonce]   (db-read-version conn key-str)
+          _                   (when (nil? db-ver) (throw-removed! key-str))
+          [old-val ver nonce] (if (= [db-ver db-nonce] [cached-ver cached-nonce])
+                                [cached-val cached-ver cached-nonce]
+                                (db-read conn key-str))]
+      (if (db-cas! conn key-str new-val (inc ver) ver nonce)
+        (do (cache-advance! cache new-val (inc ver) nonce watches self old-val)
             [old-val new-val])
         (recur)))))
 
 (defn- swap-impl [conn key-str ^AtomicReference cache ^AtomicReference vdtr
                   ^ConcurrentHashMap watches self apply-fn]
   (loop []
-    (let [[cached-val cached-ver] (.get cache)
-          db-ver        (db-read-version conn key-str)
-          _             (when (nil? db-ver) (throw-removed! key-str))
-          [old-val ver] (if (= db-ver cached-ver)
-                          [cached-val cached-ver]
-                          (db-read conn key-str))
-          new-val       (apply-fn old-val)]
+    (let [[cached-val cached-ver cached-nonce] (.get cache)
+          [db-ver db-nonce]   (db-read-version conn key-str)
+          _                   (when (nil? db-ver) (throw-removed! key-str))
+          [old-val ver nonce] (if (= [db-ver db-nonce] [cached-ver cached-nonce])
+                                [cached-val cached-ver cached-nonce]
+                                (db-read conn key-str))
+          new-val             (apply-fn old-val)]
       (validate vdtr new-val)
-      (if (db-cas! conn key-str new-val (inc ver) ver)
-        (do (cache-advance! cache new-val (inc ver) watches self old-val)
+      (if (db-cas! conn key-str new-val (inc ver) ver nonce)
+        (do (cache-advance! cache new-val (inc ver) nonce watches self old-val)
             [old-val new-val])
         (recur)))))
 
 (defn- cas-impl [conn key-str ^AtomicReference cache ^AtomicReference vdtr
                  ^ConcurrentHashMap watches self old-val new-val]
   (loop []
-    (let [[db-val ver] (db-read conn key-str)]
+    (let [[db-val ver nonce] (db-read conn key-str)]
       (when (nil? ver) (throw-removed! key-str))
       (if (not= db-val old-val)
-        (do (cache-advance! cache db-val ver)
+        (do (cache-advance! cache db-val ver nonce)
             false)
         (do (validate vdtr new-val)
-            (if (db-cas! conn key-str new-val (inc ver) ver)
-              (do (cache-advance! cache new-val (inc ver) watches self old-val)
+            (if (db-cas! conn key-str new-val (inc ver) ver nonce)
+              (do (cache-advance! cache new-val (inc ver) nonce watches self old-val)
                   true)
               (recur)))))))
 
@@ -226,16 +239,16 @@
    Atom options: :meta metadata-map, :validator validate-fn
    Extra options: :dir directory"
   [key default-value & {:keys [dir meta validator]}]
-  (let [conn     (open-db (db-path (or dir default-dir)))
-        key-str  (pr-str key)
-        _        (db-insert-default! conn key-str default-value)
-        [v ver]  (db-read conn key-str)
-        _        (when validator
-                   (when-not (validator v) (throw-invalid-state!)))
-        cache    (AtomicReference. [v ver])
-        vdtr     (AtomicReference. validator)
-        watches  (ConcurrentHashMap.)
-        meta-ref (AtomicReference. (or meta {}))]
+  (let [conn          (open-db (db-path (or dir default-dir)))
+        key-str       (pr-str key)
+        _             (db-insert-default! conn key-str default-value)
+        [v ver nonce] (db-read conn key-str)
+        _             (when validator
+                        (when-not (validator v) (throw-invalid-state!)))
+        cache         (AtomicReference. [v ver nonce])
+        vdtr          (AtomicReference. validator)
+        watches       (ConcurrentHashMap.)
+        meta-ref      (AtomicReference. (or meta {}))]
     #?(:bb
        ;; reify over IAtom2 only; IRef/IReference not yet supported in BB
        ;; https://github.com/babashka/babashka/issues/1931

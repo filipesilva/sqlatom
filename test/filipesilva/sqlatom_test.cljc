@@ -139,6 +139,19 @@
       (let [b (sqlatom/atom ::x 0)]
         (is (= 0 @b))))))
 
+(deftest recreate-same-version-test
+  (let [a (sqlatom/atom ::x 0)]
+    (swap! a inc)
+    (swap! a inc)
+    (sqlatom/remove ::x)
+    (let [b (sqlatom/atom ::x 100)]
+      (swap! b inc)
+      (swap! b inc)
+      (testing "stale atom does not use its cache when versions match"
+        (is (= 102 @a))
+        (is (= 103 (swap! a inc)))
+        (is (= 103 @b))))))
+
 (deftest keys-test
   (is (not ((sqlatom/keys) ::a)))
   (is (not ((sqlatom/keys) ::b)))
