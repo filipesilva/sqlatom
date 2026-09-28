@@ -72,7 +72,9 @@ Here's how they differ:
 | **Platforms** | Clojure, Babashka | Clojure | Clojure, Babashka, ClojureScript on Node.js and browser (in-memory only) |
 | **Scope** | Minimal, atoms only, no configuration beyond `:dir` | Feature-rich, custom serializers, error handlers, sync/async modes, `duragent` | Large, persistent maps, vectors, sets, lists and more, with its own allocator and garbage collection. No watches or validators on persistent atoms |
 
-Choose `sqlatom` if you need safe cross-process swaps with a simple API. Choose `duratom` if you need multiple storage backends or its additional features. Choose `eve` if you need fast writes to large values, or ClojureScript support.
+Choose `sqlatom` for full EDN fidelity with a simple API.
+Choose `duratom` for multiple storage backends or its additional features.
+Choose `eve` for fast writes to large values, or ClojureScript support.
 
 
 ## Babashka
