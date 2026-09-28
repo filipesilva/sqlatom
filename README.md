@@ -55,18 +55,24 @@ Both `sqlatom/keys` and `sqlatom/remove` support the `:dir` option.
 Using an existing `sqlatom` that was removed will throw an an error, but resume working normally if you recreate it using the same key.
 
 
-## Comparison with duratom
+## Comparison with duratom and eve
 
-[duratom](https://github.com/jimpil/duratom) is a more established library for durable atoms. Here's how the two differ:
+[duratom](https://github.com/jimpil/duratom) is a more established library for durable atoms.
+[eve](https://github.com/SeniorCareMarket/eve) provides shared-memory persistent data structures, including cross-process atoms backed by memory-mapped files.
+Here's how they differ:
 
-| | sqlatom | duratom |
-|---|---|---|
-| **Cross-process swap safety** | Yes, uses SQL compare-and-set with versioned rows | No, uses an in-memory lock, so concurrent processes can clobber each other |
-| **Storage backends** | SQLite only | PostgreSQL, SQLite, S3, Redis, filesystem, file.io |
-| **Consistency** | Strong, every read/write goes through the database | Eventual by default (async writes), optional sync mode |
-| **Scope** | Minimal, atoms only, no configuration beyond `:dir` | Feature-rich, custom serializers, error handlers, sync/async modes, `duragent` |
+| | sqlatom | duratom | eve |
+|---|---|---|---|
+| **Cross-process swap safety** | Yes, uses SQL compare-and-set with versioned rows | No, uses an in-memory lock, so concurrent processes can clobber each other | Yes, uses lock-free compare-and-set on a root pointer in shared memory |
+| **Storage backends** | SQLite only | PostgreSQL, SQLite, S3, Redis, filesystem, file.io | Custom memory-mapped files, or in-memory |
+| **Consistency** | Strong, every read/write goes through the database | Eventual by default (async writes), optional sync mode | Strong, writes are visible to other processes immediately via shared memory |
+| **Write cost** | Writes the whole value, ~80ms for 20mb | Writes the whole value | Copies only the changed path of the tree, ~1ms regardless of size |
+| **Metadata** | Value metadata kept, including nested. Atom metadata on Clojure only | Value metadata kept on the top-level collection only. Atom metadata supported | Not supported, value metadata is dropped and atoms have no metadata |
+| **Readers** | EDN with the process's `*data-readers*`, so custom tagged literals work | EDN with built-in readers for sorted collections and queues. Custom readers or serializers via `:rw` | None, a fixed set of types including symbols, UUIDs and dates. Records and sorted collections become plain maps and sets, other types throw on Clojure and become `nil` on ClojureScript |
+| **Platforms** | Clojure, Babashka | Clojure | Clojure, Babashka, ClojureScript on Node.js and browser (in-memory only) |
+| **Scope** | Minimal, atoms only, no configuration beyond `:dir` | Feature-rich, custom serializers, error handlers, sync/async modes, `duragent` | Large, persistent maps, vectors, sets, lists and more, with its own allocator and garbage collection. No watches or validators on persistent atoms |
 
-Choose `sqlatom` if you need safe cross-process swaps with a simple API. Choose `duratom` if you need multiple storage backends or its additional features.
+Choose `sqlatom` if you need safe cross-process swaps with a simple API. Choose `duratom` if you need multiple storage backends or its additional features. Choose `eve` if you need fast writes to large values, or ClojureScript support.
 
 
 ## Babashka
