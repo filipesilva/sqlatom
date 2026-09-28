@@ -25,7 +25,7 @@
                   rows))))))
 
 (defn- close-db [conn]
-  #?(:bb  nil
+  #?(:bb  (sqlite/close-connection conn)
      :clj (.close conn)))
 
 (defn- sql-execute! [conn sql-params]
@@ -42,38 +42,44 @@
              (with-open [rs (.executeQuery stmt)]
                (resultset->maps rs)))))
 
-(defn- add-nonce-column! [conn]
-  ;; sqlite has no ADD COLUMN IF NOT EXISTS, so check before and,
-  ;; in case another process added it meanwhile, after a failure
-  (let [has-nonce? #(some (fn [col] (= "nonce" (:name col)))
-                          (sql-query conn ["PRAGMA table_info(atoms)"]))]
-    (when-not (has-nonce?)
-      (try
-        (sql-execute! conn ["ALTER TABLE atoms ADD COLUMN nonce TEXT NOT NULL DEFAULT ''"])
-        (catch Exception e
-          (when-not (has-nonce?) (throw e)))))))
-
-;; Run in order on every open, so each must be idempotent.
-;; Strings are executed as sql, fns are called with conn.
-(def ^:private migrations
+(def ^:private pragmas
   ["PRAGMA journal_mode = WAL"
    "PRAGMA synchronous = NORMAL"
    "PRAGMA mmap_size = 134217728"         ; 128 megabytes
    "PRAGMA journal_size_limit = 67108864" ; 64 megabytes
    "PRAGMA cache_size = 2000"
-   "PRAGMA busy_timeout = 5000"
-   "CREATE TABLE IF NOT EXISTS atoms (key TEXT PRIMARY KEY, value TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1)"
-   add-nonce-column!])
+   "PRAGMA busy_timeout = 5000"])
 
-;; bb uses a db-path instead of conn
+(def ^:private migrations
+  ["CREATE TABLE IF NOT EXISTS atoms (key TEXT PRIMARY KEY, value TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1)"
+   "ALTER TABLE atoms ADD COLUMN nonce TEXT NOT NULL DEFAULT ''"])
+
+(defn- user-version [conn]
+  (:user_version (first (sql-query conn ["PRAGMA user_version"]))))
+
+(defn- migrate! [conn]
+  (when (< (user-version conn) (count migrations))
+    (sql-execute! conn ["BEGIN IMMEDIATE"])
+    (try
+      (doseq [m (drop (user-version conn) migrations)]
+        (sql-execute! conn [m]))
+      (sql-execute! conn [(str "PRAGMA user_version = " (count migrations))])
+      (sql-execute! conn ["COMMIT"])
+      (catch Exception e
+        (sql-execute! conn ["ROLLBACK"])
+        (throw e)))))
+
 (defn- open-db [db-path]
-  (let [conn #?(:bb  db-path
+  (let [conn #?(:bb  (sqlite/get-connection db-path)
                 :clj (DriverManager/getConnection (str "jdbc:sqlite:" db-path)))]
-    (doseq [m migrations]
-      (if (string? m)
-        (sql-execute! conn [m])
-        (m conn)))
-    conn))
+    (try
+      (doseq [p pragmas]
+        (sql-execute! conn [p]))
+      (migrate! conn)
+      conn
+      (catch Exception e
+        (close-db conn)
+        (throw e)))))
 
 ;; --- Helpers ---
 
