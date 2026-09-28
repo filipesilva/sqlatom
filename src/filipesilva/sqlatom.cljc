@@ -159,8 +159,12 @@
 (defn- swap-impl [conn key-str ^AtomicReference cache ^AtomicReference vdtr
                   ^ConcurrentHashMap watches self apply-fn]
   (loop []
-    (let [[old-val ver] (db-read conn key-str)
-          _             (when (nil? ver) (throw-removed! key-str))
+    (let [[cached-val cached-ver] (.get cache)
+          db-ver        (db-read-version conn key-str)
+          _             (when (nil? db-ver) (throw-removed! key-str))
+          [old-val ver] (if (= db-ver cached-ver)
+                          [cached-val cached-ver]
+                          (db-read conn key-str))
           new-val       (apply-fn old-val)]
       (validate vdtr new-val)
       (if (db-cas! conn key-str new-val (inc ver) ver)
